@@ -1,0 +1,172 @@
+#include <cstdlib>
+#include <omp.h>
+#include <iostream>
+#include <ctime>
+#include <fstream>
+#include <cmath>
+#include <random>
+
+using namespace std;
+
+double halton(int index, int base) {
+    double result = 0;
+    double f = 1.0 / base;
+    int i = index;
+
+    while (i > 0) {
+        result = result + f * (i % base);
+        i = i / base;
+        f = f / base;
+    }
+
+    return result;
+}
+
+pair<double, int> calculateWithOpenMP(double radius, int totalPoints, int numThreads) {
+    int pointsInsideCircle = 0;
+    int size_chunk = max(1, static_cast<int>(pow(2, static_cast<int>(ceil(1.6 * log10(totalPoints)))) / 8 * max(1, numThreads)));
+
+    #pragma omp parallel
+    {
+        int localCount = 0;
+
+        #pragma omp for schedule(dynamic, size_chunk)
+        for (int i = 1; i <= totalPoints; i++) {
+            double x = halton(i, 2) * radius;
+            double y = halton(i, 3) * radius;
+            if ((x * x + y * y) <= (radius * radius)) {
+                localCount++;
+            }
+        }
+
+        #pragma omp atomic
+        pointsInsideCircle += localCount;
+    }
+
+    return make_pair((static_cast<double>(pointsInsideCircle) / totalPoints) * (4 * radius * radius), omp_get_num_threads());
+}
+
+double calculateSequentially(double radius, int totalPoints) {
+    int pointsInsideCircle = 0;
+
+    for (int i = 0; i < totalPoints; i++) {
+        double x = (double)rand() / RAND_MAX * radius;
+        double y = (double)rand() / RAND_MAX * radius;
+
+        if ((x * x + y * y) <= (radius * radius)) {
+            pointsInsideCircle++;
+        }
+    }
+
+    return (static_cast<double>(pointsInsideCircle) / totalPoints) * (4 * radius * radius);
+}
+
+
+int main(int argc, char* argv[]) {
+    setlocale(LC_ALL, "rus");
+
+    if (argc < 4) {
+        cerr << "There are not enough arguments. Usage: " << argv[0] << " <number of streams> <input filename> <output filename>" << endl;
+        return 1;
+    }
+
+    int numThreads = atoi(argv[1]);
+    string inputFileName = argv[2];
+    string outputFileName = argv[3];
+
+    double radius;
+    int totalPoints;
+
+    ifstream inputFile(inputFileName);
+    if (!inputFile.is_open()) {
+        cerr << "The file could not be opened " << inputFileName << endl;
+        return 1;
+    }
+
+    try {
+        if (inputFile >> totalPoints >> radius) {
+            if (radius > 0 && totalPoints > 0) {
+            }
+            else {
+                std::cerr << "Numbers are not positive" << std::endl;
+                return 1;
+            }
+        }
+        else {
+            std::cerr << "Error reading numbers from file" << std::endl;
+            return 1;
+        }
+    }
+    catch (const exception& e) {
+        cerr << "Error reading the file: " << e.what() << endl;
+        return 1;
+    }
+    inputFile.close();
+
+
+    if (radius < 0) {
+        cerr << "Radius should be positive number" << endl;
+        return 1;
+    }
+
+
+    ofstream outputFile(outputFileName);
+
+    if (!outputFile.is_open()) {
+        cerr << "The output file could not be opened " << outputFileName << endl;
+        return 1;
+    }
+
+    outputFile << radius << " " << totalPoints << " " << numThreads << endl;
+
+    for (int i = 0; i < 1; ++i) {
+        double start_time, end_time;
+        double circleArea;
+
+        if (numThreads == -1) {
+            cout << "Запуск без OpenMP" << endl;
+            start_time = omp_get_wtime();
+            circleArea = calculateSequentially(radius, totalPoints);
+            end_time = omp_get_wtime();
+            cout << "Оценка площади круга методом Монте-Карло: " << circleArea << endl;
+        }
+        else if (numThreads >= 0) {
+            if (numThreads == 0) {
+                cout << "Количество потоков: " << " по умолчанию" << endl;
+            }
+            else {
+                omp_set_num_threads(numThreads);
+                cout << "Количество потоков: " << numThreads << endl;
+            }
+            int numThreadsToPrint;
+
+            start_time = omp_get_wtime();
+            pair<double, int> result = calculateWithOpenMP(radius, totalPoints, numThreads);
+            circleArea = result.first;
+            numThreadsToPrint = result.second;
+            end_time = omp_get_wtime();
+            cout << "Оценка площади круга методом Монте-Карло: " << circleArea << endl;
+        }
+        else {
+            cerr << "Unsupported number of threads" << endl;
+            return 1;
+        }
+
+
+        try {
+            outputFile << (end_time - start_time) * 1000 << " " << circleArea << endl;
+        }
+        catch (const exception& e) {
+            cerr << "Error writing to the file: " << e.what() << endl;
+            return 1;
+        }
+    }
+
+    outputFile.close();
+
+
+    system("pause");
+
+    return 0;
+
+}
